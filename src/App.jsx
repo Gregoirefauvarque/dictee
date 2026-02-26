@@ -1,6 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import "./App.css";
 
+// ── GitHub configuratie (hardcoded) ──────────────────────
+const GITHUB_TOKEN = "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";
+const GITHUB_OWNER = "Gregoirefauvarque";
+const GITHUB_REPO  = "dictee-app";
+const GITHUB_FILE  = "woordenlijsten.json";
+
 const DUTCH_VOICE_PREFS = ["nl-BE", "nl-NL", "nl"];
 
 // ── Speech ────────────────────────────────────────────────
@@ -28,7 +34,7 @@ function speakWord(word, rate = 0.85) {
   });
 }
 
-// ── Anthropic API ─────────────────────────────────────────
+// ── Anthropic API (via serverless proxy) ─────────────────
 async function extractFromImage(base64, mediaType) {
   const response = await fetch("/api/extract-words", {
     method: "POST",
@@ -61,30 +67,60 @@ Only target words in the array, not numbers, titles, or instructions.`
   return JSON.parse(text.replace(/```json|```/g, "").trim());
 }
 
-// ── Cloud library API ─────────────────────────────────────
+// ── GitHub opslag (rechtstreeks vanuit browser) ───────────
+const GH_HEADERS = {
+  "Authorization": `Bearer ${GITHUB_TOKEN}`,
+  "Accept": "application/vnd.github+json",
+  "X-GitHub-Api-Version": "2022-11-28",
+  "Content-Type": "application/json",
+};
+const GH_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE}`;
+
+async function ghGetFile() {
+  const res = await fetch(GH_API, { headers: GH_HEADERS });
+  if (res.status === 404) return { content: [], sha: null };
+  if (!res.ok) throw new Error(`GitHub fout: ${res.status}`);
+  const data = await res.json();
+  const content = JSON.parse(atob(data.content.replace(/\n/g, "")));
+  return { content, sha: data.sha };
+}
+
+async function ghSaveFile(content, sha) {
+  const body = {
+    message: sha ? "Woordenlijst bijgewerkt" : "Woordenlijsten aangemaakt",
+    content: btoa(unescape(encodeURIComponent(JSON.stringify(content, null, 2)))),
+  };
+  if (sha) body.sha = sha;
+  const res = await fetch(GH_API, { method: "PUT", headers: GH_HEADERS, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `GitHub fout: ${res.status}`);
+  }
+}
+
 async function fetchLibrary() {
-  const res = await fetch("/api/wordlists");
-  if (!res.ok) throw new Error("Kon bibliotheek niet laden");
-  return res.json();
+  const { content } = await ghGetFile();
+  return content;
 }
 
 async function saveWordlist(title, words) {
-  const res = await fetch("/api/wordlists", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, words }),
-  });
-  if (!res.ok) throw new Error("Kon niet opslaan");
-  return res.json();
+  const { content, sha } = await ghGetFile();
+  const existing = content.findIndex((l) => l.title === title);
+  const entry = {
+    id: existing >= 0 ? content[existing].id : Date.now().toString(),
+    title,
+    words,
+    created_at: existing >= 0 ? content[existing].created_at : new Date().toISOString(),
+  };
+  if (existing >= 0) content[existing] = entry;
+  else content.unshift(entry);
+  await ghSaveFile(content, sha);
+  return entry;
 }
 
 async function deleteWordlist(id) {
-  const res = await fetch("/api/wordlists", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
-  });
-  if (!res.ok) throw new Error("Kon niet verwijderen");
+  const { content, sha } = await ghGetFile();
+  await ghSaveFile(content.filter((l) => l.id !== id), sha);
 }
 
 // ── Helpers ───────────────────────────────────────────────
@@ -139,7 +175,6 @@ export default function App() {
   const [error, setError] = useState(null);
   const [library, setLibrary] = useState([]);
   const [libraryLoading, setLibraryLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const fileRef = useRef();
 
   useEffect(() => {
@@ -150,10 +185,7 @@ export default function App() {
   }, []);
 
   const reloadLibrary = async () => {
-    try {
-      const data = await fetchLibrary();
-      setLibrary(data);
-    } catch {}
+    try { setLibrary(await fetchLibrary()); } catch {}
   };
 
   const processFile = useCallback(async (file) => {
@@ -171,17 +203,13 @@ export default function App() {
         const extracted = result.words || result;
         const title = result.title || "Woordenlijst";
         if (!extracted.length) throw new Error("Geen woorden gevonden in de foto");
-        // Auto-save to cloud
-        setSaving(true);
         const saved = await saveWordlist(title, extracted);
-        setSaving(false);
         setWords(extracted);
         setSeriesTitle(title);
         setCurrentId(saved.id);
         await reloadLibrary();
         setPhase("ready");
       } catch (err) {
-        setSaving(false);
         setError(err.message || "Kon woorden niet uitlezen. Probeer een duidelijkere foto.");
         setPhase("upload");
       }
@@ -199,10 +227,7 @@ export default function App() {
 
   const handleDelete = async (id, e) => {
     e.stopPropagation();
-    try {
-      await deleteWordlist(id);
-      await reloadLibrary();
-    } catch {}
+    try { await deleteWordlist(id); await reloadLibrary(); } catch {}
   };
 
   const handleSaveTitle = async () => {
@@ -323,7 +348,7 @@ export default function App() {
         {phase === "loading" && (
           <div className="section">
             <div className="load-anim">📖</div>
-            <p className="load-text">{saving ? "Opslaan in bibliotheek..." : "Woorden uitlezen..."}</p>
+            <p className="load-text">Woorden uitlezen en opslaan...</p>
             <div className="dots">
               <span className="dot" style={{ animationDelay: "0s" }} />
               <span className="dot" style={{ animationDelay: "0.2s" }} />
