@@ -134,7 +134,11 @@ export default function App() {
     reader.onload = async (e) => {
       const dataUrl = e.target.result;
       const [header, base64] = dataUrl.split(",");
-      const mediaType = header.match(/:(.*?);/)[1];
+      let mediaType = header.match(/:(.*?);/)[1];
+      // Normalize jfif/jpg to jpeg for Anthropic API compatibility
+      if (mediaType === "image/jfif" || mediaType === "image/jpg") {
+        mediaType = "image/jpeg";
+      }
       try {
         const extracted = await extractWordsFromImage(base64, mediaType);
         if (!extracted.length) throw new Error("Geen woorden gevonden in de foto");
