@@ -1,12 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import "./App.css";
 
-// ── GitHub configuratie (hardcoded) ──────────────────────
-const GITHUB_TOKEN = "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";
-const GITHUB_OWNER = "Gregoirefauvarque";
-const GITHUB_REPO  = "dictee-app";
-const GITHUB_FILE  = "woordenlijsten.json";
-
 const DUTCH_VOICE_PREFS = ["nl-BE", "nl-NL", "nl"];
 
 // ── Speech ────────────────────────────────────────────────
@@ -67,60 +61,30 @@ Only target words in the array, not numbers, titles, or instructions.`
   return JSON.parse(text.replace(/```json|```/g, "").trim());
 }
 
-// ── GitHub opslag (rechtstreeks vanuit browser) ───────────
-const GH_HEADERS = {
-  "Authorization": `Bearer ${GITHUB_TOKEN}`,
-  "Accept": "application/vnd.github+json",
-  "X-GitHub-Api-Version": "2022-11-28",
-  "Content-Type": "application/json",
-};
-const GH_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE}`;
-
-async function ghGetFile() {
-  const res = await fetch(GH_API, { headers: GH_HEADERS });
-  if (res.status === 404) return { content: [], sha: null };
-  if (!res.ok) throw new Error(`GitHub fout: ${res.status}`);
-  const data = await res.json();
-  const content = JSON.parse(atob(data.content.replace(/\n/g, "")));
-  return { content, sha: data.sha };
-}
-
-async function ghSaveFile(content, sha) {
-  const body = {
-    message: sha ? "Woordenlijst bijgewerkt" : "Woordenlijsten aangemaakt",
-    content: btoa(unescape(encodeURIComponent(JSON.stringify(content, null, 2)))),
-  };
-  if (sha) body.sha = sha;
-  const res = await fetch(GH_API, { method: "PUT", headers: GH_HEADERS, body: JSON.stringify(body) });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `GitHub fout: ${res.status}`);
-  }
-}
-
+// ── Woordenlijsten via serverless API ────────────────────
 async function fetchLibrary() {
-  const { content } = await ghGetFile();
-  return content;
+  const res = await fetch("/api/wordlists");
+  if (!res.ok) throw new Error("Kon bibliotheek niet laden");
+  return res.json();
 }
 
 async function saveWordlist(title, words) {
-  const { content, sha } = await ghGetFile();
-  const existing = content.findIndex((l) => l.title === title);
-  const entry = {
-    id: existing >= 0 ? content[existing].id : Date.now().toString(),
-    title,
-    words,
-    created_at: existing >= 0 ? content[existing].created_at : new Date().toISOString(),
-  };
-  if (existing >= 0) content[existing] = entry;
-  else content.unshift(entry);
-  await ghSaveFile(content, sha);
-  return entry;
+  const res = await fetch("/api/wordlists", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, words }),
+  });
+  if (!res.ok) throw new Error("Kon niet opslaan");
+  return res.json();
 }
 
 async function deleteWordlist(id) {
-  const { content, sha } = await ghGetFile();
-  await ghSaveFile(content.filter((l) => l.id !== id), sha);
+  const res = await fetch("/api/wordlists", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error("Kon niet verwijderen");
 }
 
 // ── Helpers ───────────────────────────────────────────────
