@@ -37,19 +37,13 @@ function speakWord(word, rate = 0.85) {
 }
 
 async function extractWordsFromImage(base64, mediaType) {
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("VITE_ANTHROPIC_API_KEY is not set");
-
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetch("/api/extract-words", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-key": "true",
     },
     body: JSON.stringify({
-      model: "claude-opus-4-6",
+      model: "claude-sonnet-4-20250514",
       max_tokens: 1000,
       messages: [
         {
